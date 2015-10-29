@@ -45,6 +45,7 @@ enum {
 	LXC_TYPE_PROC_UPTIME,
 	LXC_TYPE_PROC_STAT,
 	LXC_TYPE_PROC_DISKSTATS,
+	LXC_TYPE_PROC_SWAPS,
 };
 
 struct file_info {
@@ -1951,6 +1952,81 @@ err:
 	return rv;
 }
 
+static int proc_swaps_read(char *buf, size_t size, off_t offset,
+		struct fuse_file_info *fi)
+{
+	struct fuse_context *fc = fuse_get_context();
+	struct file_info *d = (struct file_info *)fi->fh;
+	char *cg;
+	char *memswlimit_str = NULL, *memlimit_str = NULL, *memusage_str = NULL, *memswusage_str = NULL;
+	unsigned long memswlimit = 0, memlimit = 0, memusage = 0, memswusage = 0;
+	size_t total_len = 0, rv = 0;
+	char *cache = d->buf;
+	size_t cache_size = d->buflen;
+
+	if (offset){
+		if (offset > d->size)
+			return -EINVAL;
+		if (!d->cached)
+			return 0;
+		int left = d->size - offset;
+		total_len = left > size ? size: left;
+		memcpy(buf, cache + offset, total_len);
+		return total_len;
+	}
+
+	cg = get_pid_cgroup(fc->pid, "memory");
+    
+	if (!cg)
+		return read_file("/proc/swaps", buf, size, d);
+    
+	if (!cgm_get_value("memory", cg, "memory.memsw.limit_in_bytes", &memswlimit_str))
+		goto err;
+
+	if (!cgm_get_value("memory", cg, "memory.limit_in_bytes", &memlimit_str))
+		goto err;
+    
+	if (!cgm_get_value("memory", cg, "memory.usage_in_bytes", &memusage_str))
+		goto err;
+    
+	if (!cgm_get_value("memory", cg, "memory.memsw.usage_in_bytes", &memswusage_str))
+		goto err;
+    
+	memswlimit = strtoul(memswlimit_str, NULL, 10);
+	memlimit = strtoul(memlimit_str, NULL, 10);
+	memusage = strtoul(memusage_str, NULL, 10);
+	memswusage = strtoul(memswusage_str, NULL, 10);
+	memswlimit /= 1024;
+	memlimit /= 1024;
+	memusage /= 1024;
+	memswusage /= 1024;
+
+	total_len = snprintf(d->buf, d->size, "Filename\t\t\t\tType\t\tSize\tUsed\tPriority\n");
+	total_len += snprintf(d->buf, d->size, "virtual\t\t\t\tvirtual\t%lu\t%lu\t0\n",
+		memswlimit - memlimit, memswusage - memusage);
+        
+	if(total_len < 0){
+		perror("Error writing to cache");
+		rv = 0;
+		goto err;
+	}
+    
+	d->cached = 1;
+	d->size = (int)total_len;
+
+	if (total_len > size ) total_len = size;   
+	memcpy(buf, d->buf, total_len);
+	rv = total_len;
+
+err:
+	free(cg);
+	free(memswlimit_str);
+	free(memlimit_str);
+	free(memusage_str);
+	free(memswusage_str);
+	return rv;
+}
+
 /*
  * Read the cpuset.cpus for cg
  * Return the answer in a newly allocated string which must be freed
@@ -2659,6 +2735,8 @@ static int proc_open(const char *path, struct fuse_file_info *fi)
 		type = LXC_TYPE_PROC_STAT;
 	else if (strcmp(path, "/proc/diskstats") == 0)
 		type = LXC_TYPE_PROC_DISKSTATS;
+	else if (strcmp(path, "/proc/swaps") == 0)
+		type = LXC_TYPE_PROC_SWAPS;
 	if (type == -1)
 		return -ENOENT;
 
@@ -2705,6 +2783,8 @@ static int proc_read(const char *path, char *buf, size_t size, off_t offset,
 		return proc_stat_read(buf, size, offset, fi);
 	case LXC_TYPE_PROC_DISKSTATS:
 		return proc_diskstats_read(buf, size, offset, fi);
+	case LXC_TYPE_PROC_SWAPS:
+		return proc_swaps_read(buf, size, offest, fi);
 	default:
 		return -EINVAL;
 	}
