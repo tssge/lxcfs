@@ -2784,7 +2784,7 @@ static int proc_read(const char *path, char *buf, size_t size, off_t offset,
 	case LXC_TYPE_PROC_DISKSTATS:
 		return proc_diskstats_read(buf, size, offset, fi);
 	case LXC_TYPE_PROC_SWAPS:
-		return proc_swaps_read(buf, size, offest, fi);
+		return proc_swaps_read(buf, size, offset, fi);
 	default:
 		return -EINVAL;
 	}
