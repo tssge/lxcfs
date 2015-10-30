@@ -1980,8 +1980,10 @@ static int proc_swaps_read(char *buf, size_t size, off_t offset,
 	if (!cg)
 		return read_file("/proc/swaps", buf, size, d);
     
+	// cgm_get_value will fail if memsw doesn't exist which means that swap accounting
+	// is turned off. If swap accounting is off, we will return host's /proc/swaps
 	if (!cgm_get_value("memory", cg, "memory.memsw.limit_in_bytes", &memswlimit_str))
-		goto err;
+		return read_file("/proc/swaps", buf, size, d);
 
 	if (!cgm_get_value("memory", cg, "memory.limit_in_bytes", &memlimit_str))
 		goto err;
